@@ -1,0 +1,6 @@
+
+config ESDCAN
+    tristate "ESD CAN-driver"
+    ---help---
+      Esd's new CAN-driver.
+

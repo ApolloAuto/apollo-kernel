@@ -1,0 +1,429 @@
+diff -Naur kernel/drivers/net/ethernet/intel/e1000e/defines.h kernel-e1000e/drivers/net/ethernet/intel/e1000e/defines.h
+--- kernel/drivers/net/ethernet/intel/e1000e/defines.h	2016-11-15 14:47:35.000000000 +0800
++++ kernel-e1000e/drivers/net/ethernet/intel/e1000e/defines.h	2017-06-07 16:18:23.370547530 +0800
+@@ -441,12 +441,13 @@
+ #define E1000_IMS_RXQ1      E1000_ICR_RXQ1      /* Rx Queue 1 Interrupt */
+ #define E1000_IMS_TXQ0      E1000_ICR_TXQ0      /* Tx Queue 0 Interrupt */
+ #define E1000_IMS_TXQ1      E1000_ICR_TXQ1      /* Tx Queue 1 Interrupt */
+-#define E1000_IMS_OTHER     E1000_ICR_OTHER     /* Other Interrupts */
++#define E1000_IMS_OTHER     E1000_ICR_OTHER     /* Other Interrupt */
+ 
+ /* Interrupt Cause Set */
+ #define E1000_ICS_LSC       E1000_ICR_LSC       /* Link Status Change */
+ #define E1000_ICS_RXSEQ     E1000_ICR_RXSEQ     /* Rx sequence error */
+ #define E1000_ICS_RXDMT0    E1000_ICR_RXDMT0    /* Rx desc min. threshold */
++#define E1000_ICS_OTHER     E1000_ICR_OTHER     /* Other Interrupt */
+ 
+ /* Transmit Descriptor Control */
+ #define E1000_TXDCTL_PTHRESH 0x0000003F /* TXDCTL Prefetch Threshold */
+@@ -527,6 +528,11 @@
+ #define E1000_RXCW_C          0x20000000        /* Receive config */
+ #define E1000_RXCW_SYNCH      0x40000000        /* Receive config synch */
+ 
++/* HH Time Sync */
++#define E1000_TSYNCTXCTL_MAX_ALLOWED_DLY_MASK	0x0000F000 /* max delay */
++#define E1000_TSYNCTXCTL_SYNC_COMP		0x40000000 /* sync complete */
++#define E1000_TSYNCTXCTL_START_SYNC		0x80000000 /* initiate sync */
++
+ #define E1000_TSYNCTXCTL_VALID		0x00000001 /* Tx timestamp valid */
+ #define E1000_TSYNCTXCTL_ENABLED	0x00000010 /* enable Tx timestamping */
+ 
+diff -Naur kernel/drivers/net/ethernet/intel/e1000e/e1000.h kernel-e1000e/drivers/net/ethernet/intel/e1000e/e1000.h
+--- kernel/drivers/net/ethernet/intel/e1000e/e1000.h	2016-11-15 14:47:35.000000000 +0800
++++ kernel-e1000e/drivers/net/ethernet/intel/e1000e/e1000.h	2017-06-07 16:18:23.366547530 +0800
+@@ -480,7 +480,7 @@
+ void e1000e_check_options(struct e1000_adapter *adapter);
+ void e1000e_set_ethtool_ops(struct net_device *netdev);
+ 
+-int e1000e_up(struct e1000_adapter *adapter);
++void e1000e_up(struct e1000_adapter *adapter);
+ void e1000e_down(struct e1000_adapter *adapter, bool reset);
+ void e1000e_reinit_locked(struct e1000_adapter *adapter);
+ void e1000e_reset(struct e1000_adapter *adapter);
+diff -Naur kernel/drivers/net/ethernet/intel/e1000e/hw.h kernel-e1000e/drivers/net/ethernet/intel/e1000e/hw.h
+--- kernel/drivers/net/ethernet/intel/e1000e/hw.h	2016-11-15 14:47:35.000000000 +0800
++++ kernel-e1000e/drivers/net/ethernet/intel/e1000e/hw.h	2017-06-07 16:18:23.370547530 +0800
+@@ -91,6 +91,7 @@
+ #define E1000_DEV_ID_PCH_SPT_I219_V		0x1570	/* SPT PCH */
+ #define E1000_DEV_ID_PCH_SPT_I219_LM2		0x15B7	/* SPT-H PCH */
+ #define E1000_DEV_ID_PCH_SPT_I219_V2		0x15B8	/* SPT-H PCH */
++#define E1000_DEV_ID_PCH_LBG_I219_LM3		0x15B9	/* LBG PCH */
+ 
+ #define E1000_REVISION_4	4
+ 
+diff -Naur kernel/drivers/net/ethernet/intel/e1000e/ich8lan.c kernel-e1000e/drivers/net/ethernet/intel/e1000e/ich8lan.c
+--- kernel/drivers/net/ethernet/intel/e1000e/ich8lan.c	2016-11-15 14:47:35.000000000 +0800
++++ kernel-e1000e/drivers/net/ethernet/intel/e1000e/ich8lan.c	2017-06-07 16:18:23.370547530 +0800
+@@ -1984,7 +1984,7 @@
+ 	int i = 0;
+ 
+ 	while ((blocked = !(er32(FWSM) & E1000_ICH_FWSM_RSPCIPHY)) &&
+-	       (i++ < 10))
++	       (i++ < 30))
+ 		usleep_range(10000, 20000);
+ 	return blocked ? E1000_BLK_PHY_RESET : 0;
+ }
+@@ -3093,24 +3093,45 @@
+ 	struct e1000_nvm_info *nvm = &hw->nvm;
+ 	u32 bank1_offset = nvm->flash_bank_size * sizeof(u16);
+ 	u32 act_offset = E1000_ICH_NVM_SIG_WORD * 2 + 1;
++	u32 nvm_dword = 0;
+ 	u8 sig_byte = 0;
+ 	s32 ret_val;
+ 
+ 	switch (hw->mac.type) {
+-		/* In SPT, read from the CTRL_EXT reg instead of
+-		 * accessing the sector valid bits from the nvm
+-		 */
+ 	case e1000_pch_spt:
+-		*bank = er32(CTRL_EXT)
+-		    & E1000_CTRL_EXT_NVMVS;
+-		if ((*bank == 0) || (*bank == 1)) {
+-			e_dbg("ERROR: No valid NVM bank present\n");
+-			return -E1000_ERR_NVM;
+-		} else {
+-			*bank = *bank - 2;
++		bank1_offset = nvm->flash_bank_size;
++		act_offset = E1000_ICH_NVM_SIG_WORD;
++
++		/* set bank to 0 in case flash read fails */
++		*bank = 0;
++
++		/* Check bank 0 */
++		ret_val = e1000_read_flash_dword_ich8lan(hw, act_offset,
++							 &nvm_dword);
++		if (ret_val)
++			return ret_val;
++		sig_byte = (u8)((nvm_dword & 0xFF00) >> 8);
++		if ((sig_byte & E1000_ICH_NVM_VALID_SIG_MASK) ==
++		    E1000_ICH_NVM_SIG_VALUE) {
++			*bank = 0;
+ 			return 0;
+ 		}
+-		break;
++
++		/* Check bank 1 */
++		ret_val = e1000_read_flash_dword_ich8lan(hw, act_offset +
++							 bank1_offset,
++							 &nvm_dword);
++		if (ret_val)
++			return ret_val;
++		sig_byte = (u8)((nvm_dword & 0xFF00) >> 8);
++		if ((sig_byte & E1000_ICH_NVM_VALID_SIG_MASK) ==
++		    E1000_ICH_NVM_SIG_VALUE) {
++			*bank = 1;
++			return 0;
++		}
++
++		e_dbg("ERROR: No valid NVM bank present\n");
++		return -E1000_ERR_NVM;
+ 	case e1000_ich8lan:
+ 	case e1000_ich9lan:
+ 		eecd = er32(EECD);
+diff -Naur kernel/drivers/net/ethernet/intel/e1000e/netdev.c kernel-e1000e/drivers/net/ethernet/intel/e1000e/netdev.c
+--- kernel/drivers/net/ethernet/intel/e1000e/netdev.c	2016-11-15 14:47:35.000000000 +0800
++++ kernel-e1000e/drivers/net/ethernet/intel/e1000e/netdev.c	2017-06-07 16:18:23.370547530 +0800
+@@ -1905,30 +1905,15 @@
+ 	struct net_device *netdev = data;
+ 	struct e1000_adapter *adapter = netdev_priv(netdev);
+ 	struct e1000_hw *hw = &adapter->hw;
+-	u32 icr = er32(ICR);
+-
+-	if (!(icr & E1000_ICR_INT_ASSERTED)) {
+-		if (!test_bit(__E1000_DOWN, &adapter->state))
+-			ew32(IMS, E1000_IMS_OTHER);
+-		return IRQ_NONE;
+-	}
+ 
+-	if (icr & adapter->eiac_mask)
+-		ew32(ICS, (icr & adapter->eiac_mask));
++	hw->mac.get_link_status = true;
+ 
+-	if (icr & E1000_ICR_OTHER) {
+-		if (!(icr & E1000_ICR_LSC))
+-			goto no_link_interrupt;
+-		hw->mac.get_link_status = true;
+-		/* guard against interrupt when we're going down */
+-		if (!test_bit(__E1000_DOWN, &adapter->state))
+-			mod_timer(&adapter->watchdog_timer, jiffies + 1);
++	/* guard against interrupt when we're going down */
++	if (!test_bit(__E1000_DOWN, &adapter->state)) {
++		mod_timer(&adapter->watchdog_timer, jiffies + 1);
++		ew32(IMS, E1000_IMS_OTHER);
+ 	}
+ 
+-no_link_interrupt:
+-	if (!test_bit(__E1000_DOWN, &adapter->state))
+-		ew32(IMS, E1000_IMS_LSC | E1000_IMS_OTHER);
+-
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -1946,6 +1931,9 @@
+ 		/* Ring was not completely cleaned, so fire another interrupt */
+ 		ew32(ICS, tx_ring->ims_val);
+ 
++	if (!test_bit(__E1000_DOWN, &adapter->state))
++		ew32(IMS, adapter->tx_ring->ims_val);
++
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -2027,6 +2015,7 @@
+ 		       hw->hw_addr + E1000_EITR_82574(vector));
+ 	else
+ 		writel(1, hw->hw_addr + E1000_EITR_82574(vector));
++	adapter->eiac_mask |= E1000_IMS_OTHER;
+ 
+ 	/* Cause Tx interrupts on every write back */
+ 	ivar |= (1 << 31);
+@@ -2034,12 +2023,8 @@
+ 	ew32(IVAR, ivar);
+ 
+ 	/* enable MSI-X PBA support */
+-	ctrl_ext = er32(CTRL_EXT);
+-	ctrl_ext |= E1000_CTRL_EXT_PBA_CLR;
+-
+-	/* Auto-Mask Other interrupts upon ICR read */
+-	ew32(IAM, ~E1000_EIAC_MASK_82574 | E1000_IMS_OTHER);
+-	ctrl_ext |= E1000_CTRL_EXT_EIAME;
++	ctrl_ext = er32(CTRL_EXT) & ~E1000_CTRL_EXT_IAME;
++	ctrl_ext |= E1000_CTRL_EXT_PBA_CLR | E1000_CTRL_EXT_EIAME;
+ 	ew32(CTRL_EXT, ctrl_ext);
+ 	e1e_flush();
+ }
+@@ -2255,7 +2240,7 @@
+ 
+ 	if (adapter->msix_entries) {
+ 		ew32(EIAC_82574, adapter->eiac_mask & E1000_EIAC_MASK_82574);
+-		ew32(IMS, adapter->eiac_mask | E1000_IMS_OTHER | E1000_IMS_LSC);
++		ew32(IMS, adapter->eiac_mask | E1000_IMS_LSC);
+ 	} else if ((hw->mac.type == e1000_pch_lpt) ||
+ 		   (hw->mac.type == e1000_pch_spt)) {
+ 		ew32(IMS, IMS_ENABLE_MASK | E1000_IMS_ECCER);
+@@ -4146,10 +4131,24 @@
+ 
+ }
+ 
+-int e1000e_up(struct e1000_adapter *adapter)
++/**
++ * e1000e_trigger_lsc - trigger an LSC interrupt
++ * @adapter: 
++ *
++ * Fire a link status change interrupt to start the watchdog.
++ **/
++static void e1000e_trigger_lsc(struct e1000_adapter *adapter)
+ {
+ 	struct e1000_hw *hw = &adapter->hw;
+ 
++	if (adapter->msix_entries)
++		ew32(ICS, E1000_ICS_OTHER);
++	else
++		ew32(ICS, E1000_ICS_LSC);
++}
++
++void e1000e_up(struct e1000_adapter *adapter)
++{
+ 	/* hardware has been reset, we need to reload some things */
+ 	e1000_configure(adapter);
+ 
+@@ -4161,13 +4160,7 @@
+ 
+ 	netif_start_queue(adapter->netdev);
+ 
+-	/* fire a link change interrupt to start the watchdog */
+-	if (adapter->msix_entries)
+-		ew32(ICS, E1000_ICS_LSC | E1000_ICR_OTHER);
+-	else
+-		ew32(ICS, E1000_ICS_LSC);
+-
+-	return 0;
++	e1000e_trigger_lsc(adapter);
+ }
+ 
+ static void e1000e_flush_descriptors(struct e1000_adapter *adapter)
+@@ -4592,11 +4585,7 @@
+ 	hw->mac.get_link_status = true;
+ 	pm_runtime_put(&pdev->dev);
+ 
+-	/* fire a link status change interrupt to start the watchdog */
+-	if (adapter->msix_entries)
+-		ew32(ICS, E1000_ICS_LSC | E1000_ICR_OTHER);
+-	else
+-		ew32(ICS, E1000_ICS_LSC);
++	e1000e_trigger_lsc(adapter);
+ 
+ 	return 0;
+ 
+@@ -6633,7 +6622,7 @@
+ 		return rc;
+ 
+ 	if (netdev->flags & IFF_UP)
+-		rc = e1000e_up(adapter);
++		e1000e_up(adapter);
+ 
+ 	return rc;
+ }
+@@ -6824,13 +6813,8 @@
+ 
+ 	e1000_init_manageability_pt(adapter);
+ 
+-	if (netif_running(netdev)) {
+-		if (e1000e_up(adapter)) {
+-			dev_err(&pdev->dev,
+-				"can't bring device back up after reset\n");
+-			return;
+-		}
+-	}
++	if (netif_running(netdev))
++		e1000e_up(adapter);
+ 
+ 	netif_device_attach(netdev);
+ 
+@@ -7467,6 +7451,7 @@
+ 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V), board_pch_spt },
+ 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_LM2), board_pch_spt },
+ 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_SPT_I219_V2), board_pch_spt },
++	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_PCH_LBG_I219_LM3), board_pch_spt },
+ 
+ 	{ 0, 0, 0, 0, 0, 0, 0 }	/* terminate list */
+ };
+@@ -7506,14 +7491,11 @@
+  **/
+ static int __init e1000_init_module(void)
+ {
+-	int ret;
+-
+ 	pr_info("Intel(R) PRO/1000 Network Driver - %s\n",
+ 		e1000e_driver_version);
+ 	pr_info("Copyright(c) 1999 - 2015 Intel Corporation.\n");
+-	ret = pci_register_driver(&e1000_driver);
+ 
+-	return ret;
++	return pci_register_driver(&e1000_driver);
+ }
+ module_init(e1000_init_module);
+ 
+diff -Naur kernel/drivers/net/ethernet/intel/e1000e/ptp.c kernel-e1000e/drivers/net/ethernet/intel/e1000e/ptp.c
+--- kernel/drivers/net/ethernet/intel/e1000e/ptp.c	2016-11-15 14:47:35.000000000 +0800
++++ kernel-e1000e/drivers/net/ethernet/intel/e1000e/ptp.c	2017-06-07 16:18:23.370547530 +0800
+@@ -26,6 +26,12 @@
+ 
+ #include "e1000.h"
+ 
++#ifdef CONFIG_E1000E_HWTS
++#include <linux/clocksource.h>
++#include <linux/ktime.h>
++#include <asm/tsc.h>
++#endif
++
+ /**
+  * e1000e_phc_adjfreq - adjust the frequency of the hardware clock
+  * @ptp: ptp clock structure
+@@ -98,6 +104,78 @@
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_E1000E_HWTS
++#define MAX_HW_WAIT_COUNT (3)
++
++/**
++ * e1000e_phc_get_syncdevicetime - Callback given to timekeeping code reads system/device registers
++ * @device: current device time
++ * @system: system counter value read synchronously with device time
++ * @ctx: context provided by timekeeping code
++ *
++ * Read device and system (ART) clock simultaneously and return the corrected
++ * clock values in ns.
++ **/
++static int e1000e_phc_get_syncdevicetime(ktime_t *device,
++					 struct system_counterval_t *system,
++					 void *ctx)
++{
++	struct e1000_adapter *adapter = (struct e1000_adapter *)ctx;
++	struct e1000_hw *hw = &adapter->hw;
++	unsigned long flags;
++	int i;
++	u32 tsync_ctrl;
++	cycle_t dev_cycles;
++	cycle_t sys_cycles;
++
++	tsync_ctrl = er32(TSYNCTXCTL);
++	tsync_ctrl |= E1000_TSYNCTXCTL_START_SYNC |
++		E1000_TSYNCTXCTL_MAX_ALLOWED_DLY_MASK;
++	ew32(TSYNCTXCTL, tsync_ctrl);
++	for (i = 0; i < MAX_HW_WAIT_COUNT; ++i) {
++		udelay(1);
++		tsync_ctrl = er32(TSYNCTXCTL);
++		if (tsync_ctrl & E1000_TSYNCTXCTL_SYNC_COMP)
++			break;
++	}
++
++	if (i == MAX_HW_WAIT_COUNT)
++		return -ETIMEDOUT;
++
++	dev_cycles = er32(SYSSTMPH);
++	dev_cycles <<= 32;
++	dev_cycles |= er32(SYSSTMPL);
++	spin_lock_irqsave(&adapter->systim_lock, flags);
++	*device = ns_to_ktime(timecounter_cyc2time(&adapter->tc, dev_cycles));
++	spin_unlock_irqrestore(&adapter->systim_lock, flags);
++
++	sys_cycles = er32(PLTSTMPH);
++	sys_cycles <<= 32;
++	sys_cycles |= er32(PLTSTMPL);
++	*system = convert_art_to_tsc(sys_cycles);
++
++	return 0;
++}
++
++/**
++ * e1000e_phc_getsynctime - Reads the current system/device cross timestamp
++ * @ptp: ptp clock structure
++ * @cts: structure containing timestamp
++ *
++ * Read device and system (ART) clock simultaneously and return the scaled
++ * clock values in ns.
++ **/
++static int e1000e_phc_getcrosststamp(struct ptp_clock_info *ptp,
++				     struct system_device_crosststamp *xtstamp)
++{
++	struct e1000_adapter *adapter = container_of(ptp, struct e1000_adapter,
++						     ptp_clock_info);
++
++	return get_device_system_crosststamp(e1000e_phc_get_syncdevicetime,
++						adapter, NULL, xtstamp);
++}
++#endif/*CONFIG_E1000E_HWTS*/
++
+ /**
+  * e1000e_phc_gettime - Reads the current time from the hardware clock
+  * @ptp: ptp clock structure
+@@ -236,6 +314,13 @@
+ 		break;
+ 	}
+ 
++#ifdef CONFIG_E1000E_HWTS
++	/* CPU must have ART and GBe must be from Sunrise Point or greater */
++	if (hw->mac.type >= e1000_pch_spt && boot_cpu_has(X86_FEATURE_ART))
++		adapter->ptp_clock_info.getcrosststamp =
++			e1000e_phc_getcrosststamp;
++#endif/*CONFIG_E1000E_HWTS*/
++
+ 	INIT_DELAYED_WORK(&adapter->systim_overflow_work,
+ 			  e1000e_systim_overflow_work);
+ 
+diff -Naur kernel/drivers/net/ethernet/intel/e1000e/regs.h kernel-e1000e/drivers/net/ethernet/intel/e1000e/regs.h
+--- kernel/drivers/net/ethernet/intel/e1000e/regs.h	2016-11-15 14:47:35.000000000 +0800
++++ kernel-e1000e/drivers/net/ethernet/intel/e1000e/regs.h	2017-06-07 16:18:23.366547530 +0800
+@@ -245,6 +245,10 @@
+ #define E1000_SYSTIML	0x0B600	/* System time register Low - RO */
+ #define E1000_SYSTIMH	0x0B604	/* System time register High - RO */
+ #define E1000_TIMINCA	0x0B608	/* Increment attributes register - RW */
++#define E1000_SYSSTMPL  0x0B648 /* HH Timesync system stamp low register */
++#define E1000_SYSSTMPH  0x0B64C /* HH Timesync system stamp hi register */
++#define E1000_PLTSTMPL  0x0B640 /* HH Timesync platform stamp low register */
++#define E1000_PLTSTMPH  0x0B644 /* HH Timesync platform stamp hi register */
+ #define E1000_RXMTRL	0x0B634	/* Time sync Rx EtherType and Msg Type - RW */
+ #define E1000_RXUDP	0x0B638	/* Time Sync Rx UDP Port - RW */
+ 

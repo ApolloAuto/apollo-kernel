@@ -1,0 +1,23 @@
+diff -Naur linux/net/ipv4/inet_connection_sock.c linux-patch/net/ipv4/inet_connection_sock.c
+--- linux/net/ipv4/inet_connection_sock.c	2017-06-16 10:35:30.669374877 +0800
++++ linux-patch/net/ipv4/inet_connection_sock.c	2017-06-16 10:52:51.678992506 +0800
+@@ -669,6 +669,8 @@
+ 		inet_sk(newsk)->inet_sport = htons(inet_rsk(req)->ir_num);
+ 		newsk->sk_write_space = sk_stream_write_space;
+ 
++		inet_sk(newsk)->mc_list = NULL;
++
+ 		newsk->sk_mark = inet_rsk(req)->ir_mark;
+ 		atomic64_set(&newsk->sk_cookie,
+ 			     atomic64_read(&inet_rsk(req)->ir_cookie));
+diff -Naur linux/net/ipv4/tcp_minisocks.c linux-patch/net/ipv4/tcp_minisocks.c
+--- linux/net/ipv4/tcp_minisocks.c	2017-06-16 10:35:30.723374875 +0800
++++ linux-patch/net/ipv4/tcp_minisocks.c	2017-06-16 10:40:57.162999157 +0800
+@@ -546,6 +546,7 @@
+ 			newicsk->icsk_ack.last_seg_size = skb->len - newtp->tcp_header_len;
+ 		newtp->rx_opt.mss_clamp = req->mss;
+ 		tcp_ecn_openreq_child(newtp, req);
++		newtp->fastopen_req = NULL;
+ 		newtp->fastopen_rsk = NULL;
+ 		newtp->syn_data_acked = 0;
+ 		newtp->rack.mstamp.v64 = 0;

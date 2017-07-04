@@ -1,0 +1,395 @@
+diff -Naur linux/crypto/ahash.c linux-patched/crypto/ahash.c
+--- linux/crypto/ahash.c	2017-06-20 21:46:49.351150151 +0800
++++ linux-patched/crypto/ahash.c	2017-06-20 22:20:43.959020589 +0800
+@@ -31,6 +31,7 @@
+ 	crypto_completion_t complete;
+ 	void *data;
+ 	u8 *result;
++    u32 flags;
+ 	void *ubuf[] CRYPTO_MINALIGN_ATTR;
+ };
+ 
+@@ -270,6 +271,8 @@
+ 	priv->result = req->result;
+ 	priv->complete = req->base.complete;
+ 	priv->data = req->base.data;
++    priv->flags = req->base.flags;
++
+ 	/*
+ 	 * WARNING: We do not backup req->priv here! The req->priv
+ 	 *          is for internal use of the Crypto API and the
+@@ -284,38 +287,41 @@
+ 	return 0;
+ }
+ 
+-static void ahash_restore_req(struct ahash_request *req)
++static void ahash_restore_req(struct ahash_request *req, int err)
+ {
+ 	struct ahash_request_priv *priv = req->priv;
++    if (!err)
++        memcpy(priv->result, req->result,
++                crypto_ahash_digestsize(crypto_ahash_reqtfm(req)));
+ 
+ 	/* Restore the original crypto request. */
+ 	req->result = priv->result;
+-	req->base.complete = priv->complete;
+-	req->base.data = priv->data;
++    ahash_request_set_callback(req, priv->flags,
++            priv->complete, priv->data);
+ 	req->priv = NULL;
+ 
+ 	/* Free the req->priv.priv from the ADJUSTED request. */
+ 	kzfree(priv);
+ }
+ 
+-static void ahash_op_unaligned_finish(struct ahash_request *req, int err)
++static void ahash_notify_einprogress(struct ahash_request *req)
+ {
+ 	struct ahash_request_priv *priv = req->priv;
++    struct crypto_async_request oreq;
+ 
+-	if (err == -EINPROGRESS)
+-		return;
+-
+-	if (!err)
+-		memcpy(priv->result, req->result,
+-		       crypto_ahash_digestsize(crypto_ahash_reqtfm(req)));
+-
+-	ahash_restore_req(req);
++    oreq.data = priv->data;
++    priv->complete(&oreq, -EINPROGRESS);
+ }
+ 
+ static void ahash_op_unaligned_done(struct crypto_async_request *req, int err)
+ {
+ 	struct ahash_request *areq = req->data;
+ 
++    if (err == -EINPROGRESS) {
++        ahash_notify_einprogress(areq);
++        return;
++    }
++
+ 	/*
+ 	 * Restore the original request, see ahash_op_unaligned() for what
+ 	 * goes where.
+@@ -326,7 +332,7 @@
+ 	 */
+ 
+ 	/* First copy req->result into req->priv.result */
+-	ahash_op_unaligned_finish(areq, err);
++    ahash_restore_req(areq, err);
+ 
+ 	/* Complete the ORIGINAL request. */
+ 	areq->base.complete(&areq->base, err);
+@@ -342,7 +348,12 @@
+ 		return err;
+ 
+ 	err = op(req);
+-	ahash_op_unaligned_finish(req, err);
++    if (err == -EINPROGRESS ||
++            (err == -EBUSY && (ahash_request_flags(req) &
++                               CRYPTO_TFM_REQ_MAY_BACKLOG)))
++        return err;
++
++    ahash_restore_req(req, err);
+ 
+ 	return err;
+ }
+@@ -377,25 +388,14 @@
+ }
+ EXPORT_SYMBOL_GPL(crypto_ahash_digest);
+ 
+-static void ahash_def_finup_finish2(struct ahash_request *req, int err)
++static void ahash_def_finup_done2(struct crypto_async_request *req, int err)
+ {
+-	struct ahash_request_priv *priv = req->priv;
++    struct ahash_request *areq = req->data;
+ 
+ 	if (err == -EINPROGRESS)
+ 		return;
+ 
+-	if (!err)
+-		memcpy(priv->result, req->result,
+-		       crypto_ahash_digestsize(crypto_ahash_reqtfm(req)));
+-
+-	ahash_restore_req(req);
+-}
+-
+-static void ahash_def_finup_done2(struct crypto_async_request *req, int err)
+-{
+-	struct ahash_request *areq = req->data;
+-
+-	ahash_def_finup_finish2(areq, err);
++    ahash_restore_req(areq, err);
+ 
+ 	areq->base.complete(&areq->base, err);
+ }
+@@ -406,11 +406,14 @@
+ 		goto out;
+ 
+ 	req->base.complete = ahash_def_finup_done2;
+-	req->base.flags &= ~CRYPTO_TFM_REQ_MAY_SLEEP;
+ 	err = crypto_ahash_reqtfm(req)->final(req);
++    if (err == -EINPROGRESS ||
++            (err == -EBUSY && (ahash_request_flags(req) &
++                               CRYPTO_TFM_REQ_MAY_BACKLOG)))
++        return err;
+ 
+ out:
+-	ahash_def_finup_finish2(req, err);
++    ahash_restore_req(req, err);
+ 	return err;
+ }
+ 
+@@ -418,7 +421,15 @@
+ {
+ 	struct ahash_request *areq = req->data;
+ 
++    if (err == -EINPROGRESS) {
++        ahash_notify_einprogress(areq);
++        return;
++    }
++    areq->base.flags &= ~CRYPTO_TFM_REQ_MAY_SLEEP;
++
+ 	err = ahash_def_finup_finish1(areq, err);
++    if (areq->priv)
++        return;
+ 
+ 	areq->base.complete(&areq->base, err);
+ }
+@@ -433,6 +444,11 @@
+ 		return err;
+ 
+ 	err = tfm->update(req);
++    if (err == -EINPROGRESS ||
++            (err == -EBUSY && (ahash_request_flags(req) &
++                               CRYPTO_TFM_REQ_MAY_BACKLOG)))
++        return err;
++
+ 	return ahash_def_finup_finish1(req, err);
+ }
+ 
+diff -Naur linux/drivers/gpu/drm/vmwgfx/vmwgfx_surface.c linux-patched/drivers/gpu/drm/vmwgfx/vmwgfx_surface.c
+--- linux/drivers/gpu/drm/vmwgfx/vmwgfx_surface.c	2017-06-20 21:46:50.403150113 +0800
++++ linux-patched/drivers/gpu/drm/vmwgfx/vmwgfx_surface.c	2017-06-20 22:03:40.684048159 +0800
+@@ -715,8 +715,11 @@
+ 			128;
+ 
+ 	num_sizes = 0;
+-	for (i = 0; i < DRM_VMW_MAX_SURFACE_FACES; ++i)
++    for (i = 0; i < DRM_VMW_MAX_SURFACE_FACES; ++i) {
++        if (req->mip_levels[i] > DRM_VMW_MAX_MIP_LEVELS)
++            return -EINVAL;
+ 		num_sizes += req->mip_levels[i];
++    }
+ 
+ 	if (num_sizes > DRM_VMW_MAX_SURFACE_FACES *
+ 	    DRM_VMW_MAX_MIP_LEVELS)
+diff -Naur linux/drivers/scsi/sg.c linux-patched/drivers/scsi/sg.c
+--- linux/drivers/scsi/sg.c	2017-06-20 21:46:55.728149918 +0800
++++ linux-patched/drivers/scsi/sg.c	2017-06-20 22:06:16.481043961 +0800
+@@ -1005,6 +1005,8 @@
+ 		result = get_user(val, ip);
+ 		if (result)
+ 			return result;
++        if (val > SG_MAX_CDB_SIZE)
++            return -ENOMEM;
+ 		sfp->next_cmd_len = (val > 0) ? val : 0;
+ 		return 0;
+ 	case SG_GET_VERSION_NUM:
+diff -Naur linux/include/crypto/internal/hash.h linux-patched/include/crypto/internal/hash.h
+--- linux/include/crypto/internal/hash.h	2017-06-20 21:46:58.329149822 +0800
++++ linux-patched/include/crypto/internal/hash.h	2017-06-20 22:22:34.978017597 +0800
+@@ -173,6 +173,16 @@
+ 	return crypto_alloc_instance2(name, alg, ahash_instance_headroom());
+ }
+ 
++static inline void ahash_request_complete(struct ahash_request *req, int err)
++{
++    req->base.complete(&req->base, err);
++}
++
++static inline u32 ahash_request_flags(struct ahash_request *req)
++{
++    return req->base.flags;
++}
++
+ static inline struct crypto_ahash *crypto_spawn_ahash(
+ 	struct crypto_ahash_spawn *spawn)
+ {
+diff -Naur linux/net/dccp/input.c linux-patched/net/dccp/input.c
+--- linux/net/dccp/input.c	2017-06-20 21:47:03.125149647 +0800
++++ linux-patched/net/dccp/input.c	2017-06-20 22:26:39.251011016 +0800
+@@ -606,7 +606,8 @@
+ 			if (inet_csk(sk)->icsk_af_ops->conn_request(sk,
+ 								    skb) < 0)
+ 				return 1;
+-			goto discard;
++            consume_skb(skb);
++            return 0;
+ 		}
+ 		if (dh->dccph_type == DCCP_PKT_RESET)
+ 			goto discard;
+diff -Naur linux/net/packet/af_packet.c linux-patched/net/packet/af_packet.c
+--- linux/net/packet/af_packet.c	2017-06-20 21:47:03.615149629 +0800
++++ linux-patched/net/packet/af_packet.c	2017-06-20 22:49:04.618974768 +0800
+@@ -1623,6 +1623,7 @@
+ 
+ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
+ {
++    struct packet_rollover *rollover = NULL;
+ 	struct packet_sock *po = pkt_sk(sk);
+ 	struct packet_fanout *f, *match;
+ 	u8 type = type_flags & 0xff;
+@@ -1645,23 +1646,28 @@
+ 		return -EINVAL;
+ 	}
+ 
++    mutex_lock(&fanout_mutex);
++
++    err = -EINVAL;
+ 	if (!po->running)
+-		return -EINVAL;
++        goto out;
+ 
++    err = -EALREADY;
+ 	if (po->fanout)
+-		return -EALREADY;
++        goto out;
+ 
+ 	if (type == PACKET_FANOUT_ROLLOVER ||
+ 	    (type_flags & PACKET_FANOUT_FLAG_ROLLOVER)) {
+-		po->rollover = kzalloc(sizeof(*po->rollover), GFP_KERNEL);
+-		if (!po->rollover)
+-			return -ENOMEM;
+-		atomic_long_set(&po->rollover->num, 0);
+-		atomic_long_set(&po->rollover->num_huge, 0);
+-		atomic_long_set(&po->rollover->num_failed, 0);
++        err = -ENOMEM;
++        rollover = kzalloc(sizeof(*rollover), GFP_KERNEL);
++        if (!rollover)
++            goto out;
++        atomic_long_set(&rollover->num, 0);
++        atomic_long_set(&rollover->num_huge, 0);
++        atomic_long_set(&rollover->num_failed, 0);
++        po->rollover = rollover;
+ 	}
+ 
+-	mutex_lock(&fanout_mutex);
+ 	match = NULL;
+ 	list_for_each_entry(f, &fanout_list, list) {
+ 		if (f->id == id &&
+@@ -1708,11 +1714,11 @@
+ 		}
+ 	}
+ out:
+-	mutex_unlock(&fanout_mutex);
+-	if (err) {
+-		kfree(po->rollover);
++    if (err && rollover) {
++        kfree(rollover);
+ 		po->rollover = NULL;
+ 	}
++    mutex_unlock(&fanout_mutex);
+ 	return err;
+ }
+ 
+@@ -1721,23 +1727,22 @@
+ 	struct packet_sock *po = pkt_sk(sk);
+ 	struct packet_fanout *f;
+ 
+-	f = po->fanout;
+-	if (!f)
+-		return;
+-
+ 	mutex_lock(&fanout_mutex);
+-	po->fanout = NULL;
++    f = po->fanout;
++    if (f) {
++        po->fanout = NULL;
++
++        if (atomic_dec_and_test(&f->sk_ref)) {
++            list_del(&f->list);
++            dev_remove_pack(&f->prot_hook);
++            fanout_release_data(f);
++            kfree(f);
++        }
+ 
+-	if (atomic_dec_and_test(&f->sk_ref)) {
+-		list_del(&f->list);
+-		dev_remove_pack(&f->prot_hook);
+-		fanout_release_data(f);
+-		kfree(f);
++        if (po->rollover)
++            kfree_rcu(po->rollover, rcu);
+ 	}
+ 	mutex_unlock(&fanout_mutex);
+-
+-	if (po->rollover)
+-		kfree_rcu(po->rollover, rcu);
+ }
+ 
+ static bool packet_extra_vlan_len_allowed(const struct net_device *dev,
+@@ -3596,6 +3601,8 @@
+ 			return -EBUSY;
+ 		if (copy_from_user(&val, optval, sizeof(val)))
+ 			return -EFAULT;
++        if (val > INT_MAX)
++            return -EINVAL;
+ 		po->tp_reserve = val;
+ 		return 0;
+ 	}
+@@ -4108,8 +4115,8 @@
+ 		if (unlikely(!PAGE_ALIGNED(req->tp_block_size)))
+ 			goto out;
+ 		if (po->tp_version >= TPACKET_V3 &&
+-		    (int)(req->tp_block_size -
+-			  BLK_PLUS_PRIV(req_u->req3.tp_sizeof_priv)) <= 0)
++            req->tp_block_size <=
++                BLK_PLUS_PRIV((u64)req_u->req3.tp_sizeof_priv))
+ 			goto out;
+ 		if (unlikely(req->tp_frame_size < po->tp_hdrlen +
+ 					po->tp_reserve))
+@@ -4120,6 +4127,8 @@
+ 		rb->frames_per_block = req->tp_block_size / req->tp_frame_size;
+ 		if (unlikely(rb->frames_per_block == 0))
+ 			goto out;
++        if (unlikely(req->tp_block_size > UINT_MAX / req->tp_block_nr))
++            goto out;
+ 		if (unlikely((rb->frames_per_block * req->tp_block_nr) !=
+ 					req->tp_frame_nr))
+ 			goto out;
+diff -Naur linux/net/sctp/socket.c linux-patched/net/sctp/socket.c
+--- linux/net/sctp/socket.c	2017-06-20 21:47:03.629149628 +0800
++++ linux-patched/net/sctp/socket.c	2017-06-20 22:32:00.976002348 +0800
+@@ -6957,7 +6957,8 @@
+ 		 */
+ 		release_sock(sk);
+ 		current_timeo = schedule_timeout(current_timeo);
+-		BUG_ON(sk != asoc->base.sk);
++        if (sk != asoc->base.sk)
++            goto do_error;
+ 		lock_sock(sk);
+ 
+ 		*timeo_p = current_timeo;
+diff -Naur linux/net/xfrm/xfrm_user.c linux-patched/net/xfrm/xfrm_user.c
+--- linux/net/xfrm/xfrm_user.c	2017-06-20 21:47:03.728149625 +0800
++++ linux-patched/net/xfrm/xfrm_user.c	2017-06-20 22:30:01.884005556 +0800
+@@ -412,9 +412,16 @@
+ 	up = nla_data(rp);
+ 	ulen = xfrm_replay_state_esn_len(up);
+ 
+-	if (nla_len(rp) < ulen || xfrm_replay_state_esn_len(replay_esn) != ulen)
++    /* Check the overall length and the internal bitmap length to avoid
++     * potential overflow. */
++    if (nla_len(rp) < ulen ||
++            xfrm_replay_state_esn_len(replay_esn) != ulen ||
++            replay_esn->bmp_len != up->bmp_len)
+ 		return -EINVAL;
+ 
++    if (up->replay_window > up->bmp_len * sizeof(__u32) * 8)
++        return -EINVAL;
++
+ 	return 0;
+ }
+ 

@@ -1,0 +1,31 @@
+diff -Naur kernel-2/kernel/sched/completion.c kernel-1/kernel/sched/completion.c
+--- kernel-2/kernel/sched/completion.c	2016-11-30 14:08:59.717818598 +0800
++++ kernel-1/kernel/sched/completion.c	2016-11-30 14:11:09.798822760 +0800
+@@ -61,11 +61,19 @@
+ do_wait_for_common(struct completion *x,
+ 		   long (*action)(long), long timeout, int state)
+ {
++    int loop = 0;
++
+ 	if (!x->done) {
+ 		DECLARE_SWAITQUEUE(wait);
+ 
+ 		__prepare_to_swait(&x->wait, &wait);
+ 		do {
++            /* To see if it still in the wait list
++             * otherwise add to swait
++             */
++            if (unlikely(loop) && list_empty(&wait.task_list))
++                __prepare_to_swait(&x->wait, &wait);
++
+ 			if (signal_pending_state(state, current)) {
+ 				timeout = -ERESTARTSYS;
+ 				break;
+@@ -74,6 +82,7 @@
+ 			raw_spin_unlock_irq(&x->wait.lock);
+ 			timeout = action(timeout);
+ 			raw_spin_lock_irq(&x->wait.lock);
++            loop = 1;
+ 		} while (!x->done && timeout);
+ 		__finish_swait(&x->wait, &wait);
+ 		if (!x->done)
