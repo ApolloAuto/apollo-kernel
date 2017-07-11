@@ -5,7 +5,7 @@ In the first release, we add the most popular solution, Linux Kernel, under the 
 
 ## Linux Kernel
 
-Apollo Linux Kernel is based on Linux Kernel 4.4.32 with some modifications.
+Apollo Linux Kernel is based on official [Linux Kernel 4.4.32](https://www.kernel.org/pub/linux/kernel/v4.x/linux-4.4.32.tar.gz) with some modifications.
 
 ### What is the difference
 
@@ -14,6 +14,8 @@ Apollo Linux Kernel is based on Linux Kernel 4.4.32 with some modifications.
   * Bugfix for Nvidia driver under realtime patch
   * Double free in the inet_csk_clone_lock function patch (https://bugzilla.redhat.com/show_bug.cgi?id=1450972)
   * Other cve security patches
+
+[Kernel config files](https://github.com/ApolloAuto/apollo-kernel/tree/master/linux/configs) are modified for Apollo based on Ubuntu's config-4.4.0-X-generic.
 
 The Apollo team would like to thank everybody in the open source community. The GitHub apollo-kernel/linux is based on Linux. Currently, Apollo team maintains this repository. In near future, we’ll send patches back to Linux community.
 
