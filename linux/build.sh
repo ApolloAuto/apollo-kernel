@@ -132,6 +132,15 @@ function kernel_cleanall() {
 }
 
 function kernel_patch() {
+    # patch pre_rt.patch
+    grep '#res' scripts/setlocalversion > /dev/null
+    if [ $? -ne 0 ]; then
+        k_patch patches/pre_rt.patch
+    fi
+    # patch esdcan
+    if [ -d drivers/esdcan ]; then
+        k_patch patches/esdcan.patch
+    fi
     # patch e1000e.patch
     grep E1000_DEV_ID_PCH_LBG_I219_LM3 drivers/net/ethernet/intel/e1000e/hw.h > /dev/null
     if [ $? -ne 0 ]; then

@@ -1,0 +1,36 @@
+diff -Naur linux-4.4.32/kernel/locking/rtmutex.c linux-patched/kernel/locking/rtmutex.c
+--- linux-4.4.32/kernel/locking/rtmutex.c	2016-11-15 14:47:35.000000000 +0800
++++ linux-patched/kernel/locking/rtmutex.c	2017-07-11 14:13:23.827680605 +0800
+@@ -1520,7 +1520,7 @@
+ #endif
+ }
+ 
+-EXPORT_SYMBOL_GPL(rt_mutex_destroy);
++EXPORT_SYMBOL(rt_mutex_destroy);
+ 
+ /**
+  * __rt_mutex_init - initialize the rt lock
+diff -Naur linux-4.4.32/Makefile linux-patched/Makefile
+--- linux-4.4.32/Makefile	2016-11-15 14:47:35.000000000 +0800
++++ linux-patched/Makefile	2017-07-11 14:13:23.827680605 +0800
+@@ -1,7 +1,7 @@
+ VERSION = 4
+ PATCHLEVEL = 4
+ SUBLEVEL = 32
+-EXTRAVERSION =
++EXTRAVERSION = -apollo-1
+ NAME = Blurry Fish Butt
+ 
+ # *DOCUMENTATION*
+diff -Naur linux-4.4.32/scripts/setlocalversion linux-patched/scripts/setlocalversion
+--- linux-4.4.32/scripts/setlocalversion	2016-11-15 14:47:35.000000000 +0800
++++ linux-patched/scripts/setlocalversion	2017-07-11 14:13:25.107680571 +0800
+@@ -167,7 +167,7 @@
+ 	# LOCALVERSION= is not specified
+ 	if test "${LOCALVERSION+set}" != "set"; then
+ 		scm=$(scm_version --short)
+-		res="$res${scm:++}"
++		#res="$res${scm:++}"
+ 	fi
+ fi
+ 

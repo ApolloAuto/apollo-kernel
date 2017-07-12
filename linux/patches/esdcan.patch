@@ -1,0 +1,51 @@
+diff -Naur linux-4.4.32/drivers/esdcan/Kconfig.esd linux-patched/drivers/esdcan/Kconfig.esd
+--- linux-4.4.32/drivers/esdcan/Kconfig.esd	1970-01-01 08:00:00.000000000 +0800
++++ linux-patched/drivers/esdcan/Kconfig.esd	2017-07-11 14:02:17.779698197 +0800
+@@ -0,0 +1,6 @@
++
++config ESDCAN
++    tristate "ESD CAN-driver"
++    ---help---
++      Esd's new CAN-driver.
++
+diff -Naur linux-4.4.32/drivers/esdcan/Makefile.esd linux-patched/drivers/esdcan/Makefile.esd
+--- linux-4.4.32/drivers/esdcan/Makefile.esd	1970-01-01 08:00:00.000000000 +0800
++++ linux-patched/drivers/esdcan/Makefile.esd	2017-07-11 14:02:17.779698197 +0800
+@@ -0,0 +1,19 @@
++DRVVERSION=-DLEVEL=3 -DREVI=10 -DBUILD=3
++ESD_CPPFLAGS += -DBOARD_pcie402
++ESD_CPPFLAGS +=-DOSIF_OS_LINUX $(DRVVERSION)
++ESD_CPPFLAGS += -I $(src)
++ESD_CPPFLAGS +=  -DMAJOR_LINUX=52  -DHOST_DRIVER=1
++
++ccflags-y += $(ESD_CPPFLAGS)
++
++ifneq (${KERNELRELEASE},)
++	obj-m += esdcan-pcie402.o
++esdcan-pcie402-objs := esdcan.o osif.o nucleus.o esdacc.o board.o boardrc.o crc32.o
++else
++	KERNEL_SOURCE ?= /lib/modules/$(shell uname -r)/build
++	PWD := $(shell pwd)
++default:
++	${MAKE} -C ${KERNEL_SOURCE} M=${PWD} modules
++clean:
++	${MAKE} -C ${KERNEL_SOURCE} M=${PWD} clean
++endif
+diff -Naur linux-4.4.32/drivers/Kconfig linux-patched/drivers/Kconfig
+--- linux-4.4.32/drivers/Kconfig	2016-11-15 14:47:35.000000000 +0800
++++ linux-patched/drivers/Kconfig	2017-07-11 14:02:17.535698203 +0800
+@@ -198,4 +198,6 @@
+ 
+ source "drivers/fpga/Kconfig"
+ 
++source "drivers/esdcan/Kconfig"
++
+ endmenu
+diff -Naur linux-4.4.32/drivers/Makefile linux-patched/drivers/Makefile
+--- linux-4.4.32/drivers/Makefile	2016-11-15 14:47:35.000000000 +0800
++++ linux-patched/drivers/Makefile	2017-07-11 14:02:17.535698203 +0800
+@@ -172,3 +172,4 @@
+ obj-$(CONFIG_ANDROID)		+= android/
+ obj-$(CONFIG_NVMEM)		+= nvmem/
+ obj-$(CONFIG_FPGA)		+= fpga/
++obj-$(CONFIG_ESDCAN)		+= esdcan/
