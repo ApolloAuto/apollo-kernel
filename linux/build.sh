@@ -6,6 +6,22 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "${DIR}"
 
+#get original linux kernel
+function get_kernel() { 
+  kernel_version="4.4.32"
+  loadkernel_address="http://cdn.kernel.org/pub/linux/kernel/v4.x/linux-${kernel_version}.tar.xz"
+  if [ -e ./Makefile ]
+  then
+	return
+  fi
+
+  /bin/rm -rf ./linux-${kernel_version}*
+  info "Downloading linux kernel code from ${loadkernel_address}..." 
+  wget ${loadkernel_address} 1>/dev/null 2>&1 
+  tar -xvf linux-${kernel_version}.tar.xz 1>/dev/null 2>&1
+  rsync -a linux-${kernel_version}/* ${DIR}/
+ }
+
 START_TIME=$(($(date +%s%N)/1000000))
 TIME=$(date  +%Y%m%d_%H%M)
 
@@ -64,6 +80,8 @@ function fail() {
   print_delim
   exit -1
 }
+
+get_kernel
 
 _VERSION=`grep "VERSION =" Makefile |awk -F " " '{if ($1=="VERSION") print $3;}'`
 _PATCHLEVEL=`grep "PATCHLEVEL =" Makefile | awk -F " " '{if ($1=="PATCHLEVEL") print$3;}'`
@@ -138,7 +156,7 @@ function kernel_patch() {
         k_patch patches/pre_rt.patch
     fi
     # patch esdcan
-    if [ -d drivers/esdcan ]; then
+    if [ ! -d drivers/esdcan ]; then
         k_patch patches/esdcan.patch
     fi
     # patch e1000e.patch
@@ -315,7 +333,6 @@ case $1 in
     print_usage
     ;;
   *)
-    kernel_clean
     kernel_patch
     prepare_nonrt
     kernel_build
