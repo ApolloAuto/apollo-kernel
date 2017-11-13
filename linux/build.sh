@@ -273,12 +273,23 @@ function kernel_build() {
     cp arch/x86/boot/bzImage ${INSTALL_PATH}/vmlinuz-${_KERNEL_VERSION}
     cp System.map ${INSTALL_PATH}/System.map-${_KERNEL_VERSION}
     cp .config ${INSTALL_PATH}/config-${_KERNEL_VERSION}
-    cp install_kernel.sh ${INSTALL_PATH}
+    cp install*.sh ${INSTALL_PATH}
+
+    # build header
+    # TODO to replace with an elegant method
+    rsync -a scripts ${INSTALL_PATH}/linux-headers-${_KERNEL_VERSION}/
+    rsync -a arch block certs crypto Documentation drivers firmware fs include init ipc Kbuild Kconfig kernel lib Makefile mm modules.builtin modules.order Module.symvers net samples security sound System.map tools usr virt ${INSTALL_PATH}/linux-headers-${_KERNEL_VERSION}/ --exclude=*.c --exclude=*.ko --exclude=*.o --exclude=.git* --exclude=*.dts* --exclude=*.S --exclude=*.txt --exclude=*o.cmd
+    for i in `find ${INSTALL_PATH}/linux-headers-${_KERNEL_VERSION}/ -type f|grep -v Kconfig|grep -v Makefile|grep -v Kbuild|grep -v pl |grep -v include|grep -v .sh|grep -v scripts|grep -v arch|grep -v Module|grep -v module |grep -v .config |grep -v System.map |grep -v .vmlinux.cmd |grep -v .version`; do rm -rf $i; done
 
     cd ${INSTALL_PATH}
     depmod -a -b . -w ${_KERNEL_VERSION}
 
     mv lib/* . && rm -r lib
+    # remove source link
+    rm -f modules/${_KERNEL_VERSION}/source
+    rm -f modules/${_KERNEL_VERSION}/build
+    ln -s /usr/src/linux-headers-${_KERNEL_VERSION} modules/${_KERNEL_VERSION}/build
+
     mkdir install
     mv * install
     for i in `find install -name "*.ko" `; do strip --strip-unneeded $i; done
