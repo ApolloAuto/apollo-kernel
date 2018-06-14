@@ -5,7 +5,7 @@ In the first release of Apollo software, ESD PCIe CAN is used for CAN communicat
 ### How To Add ESD CAN Support to Apollo Kernel
 
 1. After/when you purchase CAN card from ESD Electronics, please contact support@esd.eu to obtain their supporting software package (search for can-pcie/402 to find it on their download website). We have tested version 3.10.3. You may need to make some changes if you use a different version.
-2. After unpacking the software package, please copy all files under src/ directory to drivers/esdcan/ (after having applied path linux/patches/esdcan.path), except for Makefile.
+2. After unpacking the software package, please copy all files under src/ directory to drivers/esdcan/ (after having applied patch linux/patches/esdcan.patch), except for Makefile.
 3. Do the following to prepare for build:
 ```bash
 cd drivers/esdcan/;rm Makefile Kconfig;ln -s Makefile.esd Makefile;ln -s Kconfig.esd Kconfig;cd ../..
