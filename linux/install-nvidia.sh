@@ -1,9 +1,9 @@
 #!/bin/bash
 
 BUILD_BASE=`pwd`
-NV_FILE="NVIDIA-Linux-x86_64-375.39.run"
-NV_URL="http://us.download.nvidia.com/XFree86/Linux-x86_64/375.39/${NV_FILE}"
-NEED_TO_COMPILE_NV_KO=0
+NV_FILE="NVIDIA-Linux-x86_64-430.50.run"
+NV_URL="https://us.download.nvidia.cn/XFree86/Linux-x86_64/430.50/${NV_FILE}"
+NEED_TO_COMPILE_NV_KO=1
 
 function clean_env() {
 
