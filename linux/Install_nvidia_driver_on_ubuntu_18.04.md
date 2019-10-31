@@ -2,7 +2,7 @@
 If you want to install Apollo-Kernel on Ubuntu 18.04, please follow the steps below to install Apollo-Kernel and NVIDIA driver.
 
 ## Install Apollo Kernel
-Follow the steps in [Apollo Software Installation Guide](https://github.com/ApolloAuto/apollo/tree/master/docs/quickstart/apollo_software_installation_guide.md#Install-apollo-kernel)to install Apollo Kernel.
+Follow the steps in [Apollo Software Installation Guide](https://github.com/ApolloAuto/apollo/tree/master/docs/quickstart/apollo_software_installation_guide.md#Install-apollo-kernel) to install Apollo Kernel.
 
 
 ## Install gcc 4.8 and set default gcc
@@ -13,7 +13,7 @@ sudo /usr/bin/update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 99
 gcc -v   # check gcc version
 ```
 
-Reboot the system with Apollo Kernel
+Reboot the system with Apollo Kernel.
 
 ## Install nvidia driver
 
@@ -24,7 +24,7 @@ sudo apt-get update
 sudo apt-get install nvidia-driver-430
 ```
 
-Reboot the system with Apollo Kernel
+Reboot the system with Apollo Kernel.
 
 ## Restore default gcc 7
 
